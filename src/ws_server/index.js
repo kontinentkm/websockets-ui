@@ -134,7 +134,117 @@ const addShips = (ws, { gameId, ships, indexPlayer }, id) => {
 };
 
 const handleAttack = (ws, { gameId, x, y, indexPlayer }, id) => {
-  // Логика обработки атаки и обновления игрового состояния
+  const room = [...rooms.values()].find(
+    (room) => room.gameData.gameId === gameId
+  );
+  if (!room) {
+    ws.send(JSON.stringify({ error: "Game not found", id }));
+    return;
+  }
+
+  // Получаем данные игры и противника
+  const enemyIndex = room.gameData.playerIds.find((pId) => pId !== indexPlayer);
+  const enemyShips = room.gameData.ships.find(
+    (s) => s.player === enemyIndex
+  ).ships;
+
+  // Проверяем попадание в корабли противника
+  let hit = false;
+  let killed = false;
+
+  for (const ship of enemyShips) {
+    for (let i = 0; i < ship.length; i++) {
+      const shipPart = {
+        x: ship.direction ? ship.position.x + i : ship.position.x,
+        y: ship.direction ? ship.position.y : ship.position.y + i,
+      };
+
+      if (shipPart.x === x && shipPart.y === y) {
+        hit = true;
+        ship.hits = (ship.hits || 0) + 1;
+
+        if (ship.hits === ship.length) {
+          killed = true;
+        }
+        break;
+      }
+    }
+
+    if (hit) break;
+  }
+
+  // Определяем статус атаки
+  const status = killed ? "killed" : hit ? "shot" : "miss";
+
+  // Обновляем текущего игрока
+  const currentPlayer = hit && !killed ? indexPlayer : enemyIndex;
+
+  // Отправляем результат атаки обоим игрокам
+  room.players.forEach((playerWs) => {
+    playerWs.send(
+      JSON.stringify({
+        type: "attack",
+        data: {
+          position: { x, y },
+          currentPlayer,
+          status,
+        },
+        id,
+      })
+    );
+  });
+
+  // Проверка на завершение игры
+  if (killed && enemyShips.every((ship) => ship.hits === ship.length)) {
+    room.players.forEach((playerWs) => {
+      playerWs.send(
+        JSON.stringify({
+          type: "finish",
+          data: { winPlayer: indexPlayer },
+          id,
+        })
+      );
+    });
+
+    // Обновляем таблицу лидеров
+    const winner = [...players.entries()].find(
+      ([_, player]) => player.id === indexPlayer
+    )[0];
+    players.get(winner).wins += 1;
+
+    // Отправляем обновленную таблицу лидеров всем игрокам
+    broadcastWinners();
+  } else {
+    // Обновляем очередь
+    room.players.forEach((playerWs) => {
+      playerWs.send(
+        JSON.stringify({
+          type: "turn",
+          data: { currentPlayer },
+          id,
+        })
+      );
+    });
+  }
+};
+
+// Функция для отправки обновленной таблицы лидеров всем игрокам
+const broadcastWinners = () => {
+  const winners = [...players.values()]
+    .sort((a, b) => b.wins - a.wins)
+    .map(({ id, wins }) => ({ name: id, wins }));
+
+  rooms.forEach((room) => {
+    room.players.forEach((playerWs) => {
+      playerWs.send(
+        JSON.stringify({
+          type: "update_winners",
+          data: winners,
+          id: 0,
+        })
+      );
+    });
+  });
 };
 
 export { wss };
