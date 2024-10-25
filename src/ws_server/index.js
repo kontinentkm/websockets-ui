@@ -1,7 +1,7 @@
 //src\ws_server\index.js
 import { WebSocketServer } from "ws";
 
-const wss = new WebSocketServer({ noServer: true });
+const wss = new WebSocketServer({ port: 3000 });
 
 // Модель данных для игроков и комнат (хранение в памяти)
 const players = new Map(); // { name: { password, id, wins } }
@@ -9,16 +9,25 @@ const rooms = new Map(); // { roomId: { players: [], gameData: {} } }
 
 // Обработка подключения нового клиента
 wss.on("connection", (ws) => {
+  console.log("New client connected");
+
+  ws.send(
+    JSON.stringify({
+      type: "connection",
+      data: { message: "Connected to WebSocket server" },
+    })
+  );
+
   ws.on("message", (message) => {
+    // console.log("Received message:", message.toString());
     try {
       const parsedMessage = JSON.parse(message);
+      // console.log("Parsed message:", parsedMessage);
       handleCommand(ws, parsedMessage);
     } catch (error) {
       ws.send(JSON.stringify({ error: "Invalid message format" }));
     }
   });
-
-  ws.send(JSON.stringify({ message: "Connected to WebSocket server" }));
 });
 
 const handleCommand = (ws, { type, data, id }) => {
@@ -44,71 +53,165 @@ const handleCommand = (ws, { type, data, id }) => {
   }
 };
 
-const registerPlayer = (ws, { name, password }, id) => {
-  if (players.has(name)) {
-    const player = players.get(name);
-    if (player.password === password) {
-      ws.send(
-        JSON.stringify({
-          type: "reg",
-          data: { name, index: player.id, error: false },
-          id,
-        })
-      );
-    } else {
-      ws.send(
-        JSON.stringify({
-          type: "reg",
-          data: { name, error: true, errorText: "Invalid password" },
-          id,
-        })
-      );
-    }
-  } else {
-    const playerId = players.size + 1;
-    players.set(name, { password, id: playerId, wins: 0 });
+const registerPlayer = (ws, data, id) => {
+  let parsedData;
+
+  // Попытка парсинга данных, если они передаются в виде строки
+  try {
+    parsedData = typeof data === "string" ? JSON.parse(data) : data;
+  } catch (error) {
+    console.error("Error parsing nested data:", error);
+    // Отправляем сообщение об ошибке в случае неудачного парсинга
     ws.send(
       JSON.stringify({
         type: "reg",
-        data: { name, index: playerId, error: false },
+        data: JSON.stringify({
+          name: undefined,
+          error: true,
+          errorText: "Invalid data format",
+        }),
         id,
       })
     );
+    return;
   }
+
+  const { name, password } = parsedData; // Деструктурируем данные
+  console.log("Registering player with data:", { name, password, id }); // Логирование данных для проверки
+
+  let response;
+
+  if (players.has(name)) {
+    // Проверяем, существует ли игрок
+    const player = players.get(name);
+
+    if (player.password === password) {
+      // Если игрок уже существует и пароль совпадает
+      response = {
+        type: "reg",
+        data: JSON.stringify({ name, index: player.id, error: false }), // Здесь добавлено JSON.stringify для поля data
+        id,
+      };
+    } else {
+      // Если пароль неверный
+      response = {
+        type: "reg",
+        data: JSON.stringify({
+          name,
+          error: true,
+          errorText: "Invalid password",
+        }), // Здесь добавлено JSON.stringify для поля data
+        id,
+      };
+    }
+  } else {
+    // Создаем нового игрока
+    const playerId = players.size + 1;
+    players.set(name, { password, id: playerId, wins: 0 });
+    response = {
+      type: "reg",
+      data: JSON.stringify({ name, index: playerId, error: false }), // Здесь добавлено JSON.stringify для поля data
+      id,
+    };
+  }
+
+  // console.log("Sending response:", response);
+  ws.send(JSON.stringify(response)); // Отправляем JSON-ответ клиенту
 };
 
+// Функция для создания комнаты
 const createRoom = (ws, data, id) => {
   const roomId = rooms.size + 1;
   rooms.set(roomId, { players: [], gameData: {} });
   ws.send(
     JSON.stringify({
       type: "update_room",
-      data: [{ roomId, roomUsers: [] }],
+      data: JSON.stringify([{ roomId, roomUsers: [] }]), // Сериализуем массив в строку
       id,
     })
   );
 };
 
-const addUserToRoom = (ws, { indexRoom }, id) => {
-  const room = rooms.get(indexRoom);
+const addUserToRoom = (ws, data, id) => {
+  console.log("Type of received data:", typeof data);
+  console.log("Received data in addUserToRoom:", data); // Логируем полученные данные
+
+  // Преобразуем строку в объект, если это необходимо
+  if (typeof data === "string") {
+    try {
+      data = JSON.parse(data);
+    } catch (e) {
+      ws.send(JSON.stringify({ error: "Invalid JSON format", id }));
+      console.log("Failed to parse data as JSON:", data);
+      return;
+    }
+  }
+
+  // Проверяем, является ли data объектом и имеет ли он правильный формат
+  if (!data || typeof data !== "object" || typeof data.indexRoom !== "number") {
+    ws.send(JSON.stringify({ error: "Invalid data format", id }));
+    console.log("Invalid data format received:", data);
+    return;
+  }
+
+  const room = rooms.get(data.indexRoom); // Используем indexRoom из data
   if (room && room.players.length < 2) {
-    room.players.push(ws);
+    room.players.push(ws); // Добавляем игрока в комнату
+    console.log(
+      `Player added to room: ${data.indexRoom}. Current players: ${room.players.length}`
+    );
+
     if (room.players.length === 2) {
       const gameId = Math.random().toString(36).substring(2);
       const playerIds = room.players.map((_, idx) => idx + 1);
       room.gameData = { gameId, playerIds, ships: [] };
+
       room.players.forEach((playerWs, idx) => {
-        playerWs.send(
-          JSON.stringify({
-            type: "create_game",
-            data: { idGame: gameId, idPlayer: playerIds[idx] },
-            id,
-          })
-        );
+        const message = JSON.stringify({
+          type: "create_game",
+          data: { idGame: gameId, idPlayer: playerIds[idx] },
+          id,
+        });
+
+        console.log(
+          `Sending create_game message to player ${playerIds[idx]}:`,
+          message
+        ); // Логируем сообщение
+        playerWs.send(message);
       });
     }
   } else {
     ws.send(JSON.stringify({ error: "Room is full or does not exist", id }));
+    console.log(
+      `Failed to add player: Room is full or does not exist. Room ID: ${data.indexRoom}`
+    );
+  }
+};
+
+// Пример обработки сообщения от клиента
+const onMessage = (ws, message) => {
+  let parsedMessage;
+
+  try {
+    parsedMessage = JSON.parse(message);
+  } catch (e) {
+    console.error("Failed to parse message:", message);
+    return;
+  }
+
+  const { type, data, id } = parsedMessage;
+  console.log("Parsed message:", parsedMessage); // Логируем разобранное сообщение
+
+  if (data && typeof data === "object" && typeof data.indexRoom === "number") {
+    switch (type) {
+      case "add_user_to_room":
+        addUserToRoom(ws, data, id); // Вызываем функцию добавления пользователя в комнату
+        break;
+      // Другие действия
+    }
+  } else {
+    ws.send(JSON.stringify({ error: "Invalid data format", id }));
+    console.log("Invalid data format received:", data);
   }
 };
 
