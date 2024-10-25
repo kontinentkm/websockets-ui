@@ -1,7 +1,7 @@
 //src\ws_server\index.js
-import WebSocket from "ws";
+import { WebSocketServer } from "ws";
 
-const wss = new WebSocket.Server({ noServer: true });
+const wss = new WebSocketServer({ noServer: true });
 
 // Модель данных для игроков и комнат (хранение в памяти)
 const players = new Map(); // { name: { password, id, wins } }
@@ -248,3 +248,4 @@ const broadcastWinners = () => {
 };
 
 export { wss };
+export { handleAttack };
