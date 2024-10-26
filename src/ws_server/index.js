@@ -141,7 +141,9 @@ const addUserToRoom = (ws, data, id) => {
     try {
       data = JSON.parse(data);
     } catch (e) {
-      ws.send(JSON.stringify({ error: "Invalid JSON format", id }));
+      ws.send(
+        JSON.stringify({ type: "error", error: "Invalid JSON format", id })
+      );
       console.log("Failed to parse data as JSON:", data);
       return;
     }
@@ -149,7 +151,9 @@ const addUserToRoom = (ws, data, id) => {
 
   // Проверяем, является ли data объектом и имеет ли он правильный формат
   if (!data || typeof data !== "object" || typeof data.indexRoom !== "number") {
-    ws.send(JSON.stringify({ error: "Invalid data format", id }));
+    ws.send(
+      JSON.stringify({ type: "error", error: "Invalid data format", id })
+    );
     console.log("Invalid data format received:", data);
     return;
   }
@@ -168,20 +172,21 @@ const addUserToRoom = (ws, data, id) => {
 
       room.players.forEach((playerWs, idx) => {
         const message = JSON.stringify({
-          type: "create_game",
-          data: { idGame: gameId, idPlayer: playerIds[idx] },
+          type: "create_game", // <-- Убедитесь, что type есть
+          data: JSON.stringify({ idGame: gameId, idPlayer: playerIds[idx] }),
           id,
         });
-
-        console.log(
-          `Sending create_game message to player ${playerIds[idx]}:`,
-          message
-        ); // Логируем сообщение
         playerWs.send(message);
       });
     }
   } else {
-    ws.send(JSON.stringify({ error: "Room is full or does not exist", id }));
+    ws.send(
+      JSON.stringify({
+        type: "error",
+        error: "Room is full or does not exist",
+        id,
+      })
+    );
     console.log(
       `Failed to add player: Room is full or does not exist. Room ID: ${data.indexRoom}`
     );
