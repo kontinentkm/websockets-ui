@@ -47,7 +47,9 @@ const handleCommand = (ws, { type, data, id }) => {
     case "attack":
       handleAttack(ws, data, id);
       break;
-    // Дополнительные команды можно добавить здесь
+    case "single_play": // Добавление команды для одиночной игры
+      createSinglePlayBot(ws, data, id);
+      break;
     default:
       ws.send(JSON.stringify({ error: "Unknown command type", id }));
   }
@@ -218,6 +220,66 @@ const onMessage = (ws, message) => {
     ws.send(JSON.stringify({ error: "Invalid data format", id }));
     console.log("Invalid data format received:", data);
   }
+};
+
+// Создание игры с ботом
+const createSinglePlayBot = (ws, data, id) => {
+  const roomId = Math.random().toString(36).substring(2); // Создаем уникальный ID для комнаты
+  const botWs = {}; // Объект, имитирующий подключение бота
+
+  // Добавляем игрока и бота в новую комнату
+  const room = {
+    players: [ws, botWs],
+    gameData: {
+      gameId: roomId,
+      playerIds: [1, 2],
+      ships: [], // Можно добавить генерацию кораблей для игрока и бота
+    },
+    bot: true, // Флаг, показывающий, что в комнате есть бот
+  };
+
+  rooms.set(roomId, room); // Сохраняем комнату с ботом
+
+  // Отправляем сообщение игроку о начале игры
+  ws.send(
+    JSON.stringify({
+      type: "create_game",
+      data: JSON.stringify({
+        idGame: roomId,
+        idPlayer: 1, // Индекс игрока
+      }),
+      id,
+    })
+  );
+
+  // Логика игры для бота: бот атакует наугад каждые 2 секунды
+  const botAttackInterval = setInterval(() => {
+    if (room.gameData.currentPlayerIndex === 2) {
+      // Проверяем, что сейчас ход бота
+      const randomPosition = {
+        x: Math.floor(Math.random() * 10), // Генерируем случайную координату x
+        y: Math.floor(Math.random() * 10), // Генерируем случайную координату y
+      };
+
+      // Отправляем атаку от бота игроку
+      ws.send(
+        JSON.stringify({
+          type: "attack",
+          data: JSON.stringify({
+            position: randomPosition,
+            currentPlayer: 2,
+            status: "hit", // Заменить на реальный статус, если добавите проверку попаданий
+          }),
+          id,
+        })
+      );
+
+      // Меняем текущего игрока на игрока 1
+      room.gameData.currentPlayerIndex = 1;
+    }
+  }, 2000); // Интервал атак бота (2 секунды)
+
+  room.botAttackInterval = botAttackInterval; // Сохраняем таймер для остановки игры при необходимости
 };
 
 const addShips = (ws, { gameId, ships, indexPlayer }, id) => {
