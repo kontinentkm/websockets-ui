@@ -28,6 +28,19 @@ wss.on("connection", (ws) => {
       ws.send(JSON.stringify({ error: "Invalid message format" }));
     }
   });
+
+  // Перемещаем этот блок внутрь обработчика подключения
+  ws.onmessage = (event) => {
+    const response = JSON.parse(event.data);
+
+    if (response.type === "create_game") {
+      const { idGame, idPlayer } = JSON.parse(response.data);
+      currentGameId = idGame; // Сохраняем ID игры
+
+      // Пример отправки данных о кораблях
+      sendShipsToServer(currentGameId, playerShipsArray, idPlayer);
+    }
+  };
 });
 
 const handleCommand = (ws, { type, data, id }) => {
@@ -231,75 +244,100 @@ const createSinglePlayBot = (ws, data, id) => {
   const room = {
     players: [ws, botWs],
     gameData: {
-      gameId: roomId,
+      gameId: roomId, // Присваиваем roomId как gameId
       playerIds: [1, 2],
-      ships: [], // Можно добавить генерацию кораблей для игрока и бота
+      ships: [], // Здесь мы добавим генерацию кораблей для игрока и бота
+      currentPlayerIndex: 1, // Игрок начинает игру первым
     },
     bot: true, // Флаг, показывающий, что в комнате есть бот
   };
 
   rooms.set(roomId, room); // Сохраняем комнату с ботом
 
+  // Генерация кораблей для бота (например, можно добавить случайные координаты)
+  const botShips = generateBotShips();
+
+  // Добавляем корабли для бота
+  room.gameData.ships.push({ player: 2, ships: botShips });
+
   // Отправляем сообщение игроку о начале игры
   ws.send(
     JSON.stringify({
       type: "create_game",
       data: JSON.stringify({
-        idGame: roomId,
+        idGame: roomId, // Отправляем созданный roomId в качестве idGame
         idPlayer: 1, // Индекс игрока
       }),
       id,
     })
   );
+};
 
-  // Логика игры для бота: бот атакует наугад каждые 2 секунды
-  const botAttackInterval = setInterval(() => {
-    if (room.gameData.currentPlayerIndex === 2) {
-      // Проверяем, что сейчас ход бота
-      const randomPosition = {
-        x: Math.floor(Math.random() * 10), // Генерируем случайную координату x
-        y: Math.floor(Math.random() * 10), // Генерируем случайную координату y
-      };
+// Генерация случайных кораблей для бота
+const generateBotShips = () => {
+  // Пример генерации 5 кораблей, добавьте свою логику
+  return [
+    { position: { x: 0, y: 0 }, length: 3, direction: true },
+    { position: { x: 2, y: 2 }, length: 2, direction: false },
+    { position: { x: 4, y: 4 }, length: 1, direction: true },
+    { position: { x: 6, y: 6 }, length: 4, direction: false },
+    { position: { x: 8, y: 8 }, length: 1, direction: true },
+  ];
+};
 
-      // Отправляем атаку от бота игроку
-      ws.send(
-        JSON.stringify({
-          type: "attack",
-          data: JSON.stringify({
-            position: randomPosition,
-            currentPlayer: 2,
-            status: "hit", // Заменить на реальный статус, если добавите проверку попаданий
-          }),
-          id,
-        })
-      );
-
-      // Меняем текущего игрока на игрока 1
-      room.gameData.currentPlayerIndex = 1;
-    }
-  }, 2000); // Интервал атак бота (2 секунды)
-
-  room.botAttackInterval = botAttackInterval; // Сохраняем таймер для остановки игры при необходимости
+// Функция отправки кораблей
+const sendShipsToServer = (gameId, ships, playerIndex) => {
+  ws.send(
+    JSON.stringify({
+      type: "add_ships",
+      data: {
+        gameId: gameId, // Передаем сохраненный `currentGameId`
+        ships: ships, // Массив с данными о кораблях
+        indexPlayer: playerIndex, // Индекс игрока (например, 1 для игрока)
+      },
+      id: 0, // Здесь может быть уникальный идентификатор сообщения, если требуется
+    })
+  );
 };
 
 const addShips = (ws, { gameId, ships, indexPlayer }, id) => {
   const room = [...rooms.values()].find(
     (room) => room.gameData.gameId === gameId
   );
+
   if (room) {
+    console.log(`Adding ships for player ${indexPlayer} in game ${gameId}`);
     room.gameData.ships.push({ player: indexPlayer, ships });
-    if (room.gameData.ships.length === 2) {
-      const currentPlayerIndex = room.gameData.playerIds[0];
+
+    // Логирование состояния после добавления кораблей
+    console.log("Current ships in gameData:", room.gameData.ships);
+
+    // Проверка, что оба игрока добавили свои корабли и их количество корректно
+    if (
+      room.gameData.ships.length === 2 &&
+      room.gameData.ships.every((s) => s.ships.length === 5)
+    ) {
+      console.log("Both players have added their ships. Starting game...");
+      const currentPlayerIndex = room.gameData.playerIds[0]; // Первый игрок начинает игру
+      room.gameData.currentPlayerIndex = currentPlayerIndex; // Сохраняем текущего игрока
+
       room.players.forEach((playerWs) => {
-        playerWs.send(
-          JSON.stringify({
-            type: "start_game",
-            data: { ships, currentPlayerIndex },
-            id,
-          })
-        );
+        const message = JSON.stringify({
+          type: "start_game",
+          data: {
+            ships: room.gameData.ships, // Отправляем информацию обо всех кораблях
+            currentPlayerIndex,
+          },
+          id,
+        });
+        console.log("Sending start_game message:", message);
+        playerWs.send(message);
       });
+    } else {
+      console.log("Not all players have added their ships correctly.");
     }
+  } else {
+    console.log(`Room not found for gameId ${gameId}`);
   }
 };
 
