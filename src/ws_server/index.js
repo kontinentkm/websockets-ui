@@ -19,28 +19,13 @@ wss.on("connection", (ws) => {
   );
 
   ws.on("message", (message) => {
-    // console.log("Received message:", message.toString());
     try {
       const parsedMessage = JSON.parse(message);
-      // console.log("Parsed message:", parsedMessage);
       handleCommand(ws, parsedMessage);
     } catch (error) {
       ws.send(JSON.stringify({ error: "Invalid message format" }));
     }
   });
-
-  // Перемещаем этот блок внутрь обработчика подключения
-  ws.onmessage = (event) => {
-    const response = JSON.parse(event.data);
-
-    if (response.type === "create_game") {
-      const { idGame, idPlayer } = JSON.parse(response.data);
-      currentGameId = idGame; // Сохраняем ID игры
-
-      // Пример отправки данных о кораблях
-      sendShipsToServer(currentGameId, playerShipsArray, idPlayer);
-    }
-  };
 });
 
 const handleCommand = (ws, { type, data, id }) => {
@@ -187,10 +172,11 @@ const addUserToRoom = (ws, data, id) => {
 
       room.players.forEach((playerWs, idx) => {
         const message = JSON.stringify({
-          type: "create_game", // <-- Убедитесь, что type есть
+          type: "create_game",
           data: JSON.stringify({ idGame: gameId, idPlayer: playerIds[idx] }),
           id,
         });
+        console.log("Sending create_game message:", message);
         playerWs.send(message);
       });
     }
@@ -205,33 +191,6 @@ const addUserToRoom = (ws, data, id) => {
     console.log(
       `Failed to add player: Room is full or does not exist. Room ID: ${data.indexRoom}`
     );
-  }
-};
-
-// Пример обработки сообщения от клиента
-const onMessage = (ws, message) => {
-  let parsedMessage;
-
-  try {
-    parsedMessage = JSON.parse(message);
-  } catch (e) {
-    console.error("Failed to parse message:", message);
-    return;
-  }
-
-  const { type, data, id } = parsedMessage;
-  console.log("Parsed message:", parsedMessage); // Логируем разобранное сообщение
-
-  if (data && typeof data === "object" && typeof data.indexRoom === "number") {
-    switch (type) {
-      case "add_user_to_room":
-        addUserToRoom(ws, data, id); // Вызываем функцию добавления пользователя в комнату
-        break;
-      // Другие действия
-    }
-  } else {
-    ws.send(JSON.stringify({ error: "Invalid data format", id }));
-    console.log("Invalid data format received:", data);
   }
 };
 
@@ -271,6 +230,7 @@ const createSinglePlayBot = (ws, data, id) => {
       id,
     })
   );
+  console.log(`Sent create_game message with roomId: ${roomId}`);
 };
 
 // Генерация случайных кораблей для бота
@@ -301,44 +261,24 @@ const sendShipsToServer = (gameId, ships, playerIndex) => {
 };
 
 const addShips = (ws, { gameId, ships, indexPlayer }, id) => {
+  console.log("Received data in addShips:", { gameId, ships, indexPlayer });
+  if (!gameId || !ships || indexPlayer === undefined) {
+    ws.send(JSON.stringify({ error: "Invalid data for addShips", id }));
+    return;
+  }
+
   const room = [...rooms.values()].find(
     (room) => room.gameData.gameId === gameId
   );
 
-  if (room) {
-    console.log(`Adding ships for player ${indexPlayer} in game ${gameId}`);
-    room.gameData.ships.push({ player: indexPlayer, ships });
-
-    // Логирование состояния после добавления кораблей
-    console.log("Current ships in gameData:", room.gameData.ships);
-
-    // Проверка, что оба игрока добавили свои корабли и их количество корректно
-    if (
-      room.gameData.ships.length === 2 &&
-      room.gameData.ships.every((s) => s.ships.length === 5)
-    ) {
-      console.log("Both players have added their ships. Starting game...");
-      const currentPlayerIndex = room.gameData.playerIds[0]; // Первый игрок начинает игру
-      room.gameData.currentPlayerIndex = currentPlayerIndex; // Сохраняем текущего игрока
-
-      room.players.forEach((playerWs) => {
-        const message = JSON.stringify({
-          type: "start_game",
-          data: {
-            ships: room.gameData.ships, // Отправляем информацию обо всех кораблях
-            currentPlayerIndex,
-          },
-          id,
-        });
-        console.log("Sending start_game message:", message);
-        playerWs.send(message);
-      });
-    } else {
-      console.log("Not all players have added their ships correctly.");
-    }
-  } else {
-    console.log(`Room not found for gameId ${gameId}`);
+  if (!room) {
+    ws.send(JSON.stringify({ error: "Room not found", id }));
+    return;
   }
+
+  // Добавление кораблей игрока
+  room.gameData.ships.push({ player: indexPlayer, ships });
+  console.log("Ships added successfully:", { room });
 };
 
 const handleAttack = (ws, { gameId, x, y, indexPlayer }, id) => {
